@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Funding Treemap</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 10px;
+            max-width: 1200px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        #tooltip {
+            position: absolute;
+            background: #fff;
+            border: 1px solid #ccc;
+            padding: 8px;
+            border-radius: 4px;
+            display: none;
+            pointer-events: none;
+            font-size: 11px;
+        }
+
+        #legend {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin: 8px 0;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        .legend-item div {
+            width: 15px;
+            height: 15px;
+            margin-right: 4px;
+        }
+
+        svg {
+            width: 100%;
+            height: 400px; /* Reduced from 600px */
+        }
+
+        #breadcrumb {
+            margin: 10px 0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+        }
+
+        #breadcrumb span {
+            padding: 6px 10px;
+            background: #f5f5f5;
+            border-radius: 15px;
+            color: #007BFF;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.3s ease, color 0.3s ease;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
+
+        #breadcrumb span:hover {
+            background: #007BFF;
+            color: white;
+        }
+
+        #breadcrumb span.active {
+            background: #007BFF;
+            color: white;
+            cursor: default;
+            box-shadow: none;
+        }
+
+        #breadcrumb span:not(:last-child)::after {
+            content: ">";
+            margin-left: 8px;
+            color: #888;
+            font-weight: normal;
+        }
+
+        #yearly-legend {
+            margin: 10px 0;
+            font-size: 12px;
+        }
+
+        
+    </style>
+</head>
+
+<body>
+    <div id="breadcrumb"></div>
+    <div id="legend"></div>
+    <svg></svg>
+    <div id="tooltip"></div>
+    <div id="yearly-legend" style="margin: 10px 0;"></div>
+
+    <script>
+        // Load and Process Data
+        // Modify the initial script to store the original hierarchy
+        let hierarchy;
+
+        // Load and Process Data
+        d3.csv("tb_data.csv").then(data => {
+            hierarchy = processData(data);
+            drawTreemap(hierarchy);
+            drawLegend(hierarchy.children.map(d => d.name), hierarchy); // Initial legend for continents
+            updateBreadcrumb(["World"]); // Initial breadcrumb
+        });
+
+
+        function processData(data) {
+            // Aggregate data into hierarchical format
+            const continents = d3.group(data, d => d.Continent);
+
+            return {
+                name: "World",
+                children: Array.from(continents, ([continent, countries]) => ({
+                    name: continent,
+                    children: Array.from(d3.group(countries, d => d.Country), ([country, records]) => ({
+                        name: country,
+                        totalFunding: d3.sum(records, d => +d.Total_Funding),
+                        yearlyFunding: records.map(r => ({
+                            year: +r.Year,
+                            funding: +r.Total_Funding
+                        }))
+                    }))
+                }))
+            };
+        }
+        // Updated Breadcrumb Logic
+        function navigateToHierarchy(levels, data) {
+            let currentLevel = data;
+            for (let i = 1; i < levels.length; i++) {
+                const nextLevel = currentLevel.children.find(child => child.name === levels[i]);
+                if (nextLevel) {
+                    currentLevel = nextLevel;
+                }
+            }
+            return {
+                name: levels[levels.length - 1],
+                children: currentLevel.children || []
+            };
+        }
+
+        // Draw Treemap
+        function drawTreemap(data, level = "World", parentColor = null) {
+            const svg = d3.select("svg");
+            svg.selectAll("*").remove(); // Clear previous visualization
+            // Clear yearly legend when not rendering yearly maps
+            d3.select("#yearly-legend").html("");
+
+
+            const width = svg.node().clientWidth;
+            const height = svg.node().clientHeight;
+
+            const treemap = d3.treemap().size([width, height]).padding(1);
+
+            const root = d3.hierarchy(data).sum(d => d.totalFunding);
+            treemap(root);
+
+            const darkPastelColors = [
+            "#8da0cb",  // Muted blue
+    "#fc8d62",  // Soft orange
+    "#66c2a5",  // Sage green
+    "#e78ac3",  // Soft pink
+    "#a6d854",  // Light olive green
+    "#ffd92f",  // Muted yellow
+    "#e5c494",  // Soft tan
+    "#b3b3b3"   // Dark grey
+];
+
+            // Use either the parent color or a default ordinal color scale
+            const color = parentColor
+                ? () => parentColor
+                : d3.scaleOrdinal(darkPastelColors);
+
+            const nodes = svg.selectAll("g")
+                .data(root.leaves())
+                .enter()
+                .append("g")
+                .attr("transform", d => `translate(${d.x0},${d.y0})`);
+
+            nodes.append("rect")
+                .attr("width", d => d.x1 - d.x0)
+                .attr("height", d => d.y1 - d.y0)
+                .attr("fill", d => color(d.parent.data.name))
+                .attr("stroke", "#2b2b2b") // Greyish-black border
+                .attr("stroke-width", 1)
+                .on("click", (event, d) => {
+                    if (d.data.yearlyFunding) {
+                        drawYearlyTreemap(d.data);
+                        updateBreadcrumb([...level.split(" > "), d.data.name]);
+                    }
+                })
+                .on("mouseover", showTooltip)
+                .on("mouseout", hideTooltip);
+
+            nodes.append("title")
+                .text(d => `${d.data.name}: ${d3.format(",")(d.data.totalFunding)}`);
+        }
+
+
+        // Draw Yearly Treemap
+        function drawYearlyTreemap(countryData) {
+            const svg = d3.select("svg");
+            svg.selectAll("*").remove(); // Clear previous visualization
+
+            // Clear the yearly legend for other visualizations
+            d3.select("#yearly-legend").html("");
+
+            const width = svg.node().clientWidth;
+            const height = svg.node().clientHeight;
+
+            const treemap = d3.treemap().size([width, height]).padding(1);
+
+            const root = d3.hierarchy({ children: countryData.yearlyFunding }).sum(d => d.funding);
+            treemap(root);
+
+            const maxFunding = d3.max(root.leaves(), d => d.value);
+            const color = d3.scaleSequential(d3.interpolateBlues)
+                .domain([0, maxFunding]);
+
+            const nodes = svg.selectAll("g")
+                .data(root.leaves())
+                .enter()
+                .append("g")
+                .attr("transform", d => `translate(${d.x0},${d.y0})`);
+
+            nodes.append("rect")
+                .attr("width", d => d.x1 - d.x0)
+                .attr("height", d => d.y1 - d.y0)
+                .attr("fill", d => color(d.value))
+                .attr("stroke", "#2b2b2b") // Greyish-black border
+                .attr("stroke-width", 1)
+                .on("mouseover", showTooltip)
+                .on("mouseout", hideTooltip);
+
+            nodes.append("title")
+                .text(d => `Year: ${d.data.year}, Funding: ${d3.format(",")(d.data.funding)}`);
+
+            // Add Color Intensity Legend
+            const legendWidth = 200;
+            const legendHeight = 20;
+
+            const legendSvg = d3.select("#yearly-legend")
+                .html("") // Clear existing legend
+                .append("svg")
+                .attr("width", legendWidth + 50)
+                .attr("height", legendHeight + 30);
+
+            // Gradient scale
+            const gradient = legendSvg.append("defs")
+                .append("linearGradient")
+                .attr("id", "gradient")
+                .attr("x1", "0%")
+                .attr("y1", "0%")
+                .attr("x2", "100%")
+                .attr("y2", "0%");
+
+            gradient.selectAll("stop")
+                .data(d3.range(0, 1.01, 0.1)) // Stops for gradient
+                .enter()
+                .append("stop")
+                .attr("offset", d => `${d * 100}%`)
+                .attr("stop-color", d => color(d * maxFunding));
+
+            // Legend bar
+            legendSvg.append("rect")
+                .attr("x", 10)
+                .attr("y", 10)
+                .attr("width", legendWidth)
+                .attr("height", legendHeight)
+                .style("fill", "url(#gradient)");
+
+            // Legend scale labels
+            const legendScale = d3.scaleLinear()
+                .domain([0, maxFunding])
+                .range([10, 10 + legendWidth]);
+
+            const legendAxis = d3.axisBottom(legendScale)
+                .ticks(2)
+                .tickFormat(d3.format(","));
+
+            legendSvg.append("g")
+                .attr("transform", `translate(0, ${legendHeight + 10})`)
+                .call(legendAxis)
+                .selectAll("text")
+                .style("font-size", "12px");
+        }
+
+
+        // Tooltip
+        function showTooltip(event, d) {
+            d3.select("#tooltip")
+                .style("display", "block")
+                .style("left", `${event.pageX + 10}px`)
+                .style("top", `${event.pageY + 10}px`)
+                .html(`
+            <strong>${d.data.name || d.data.year}</strong><br>
+            Funding: ${d3.format(",")(d.data.funding || d.data.totalFunding)}
+        `);
+        }
+
+        function hideTooltip() {
+            d3.select("#tooltip").style("display", "none");
+        }
+
+        // Draw Legend
+        function drawLegend(continents, hierarchy) {
+            const darkPastelColors = [
+            "#8da0cb",  // Muted blue
+    "#fc8d62",  // Soft orange
+    "#66c2a5",  // Sage green
+    "#e78ac3",  // Soft pink
+    "#a6d854",  // Light olive green
+    "#ffd92f",  // Muted yellow
+    "#e5c494",  // Soft tan
+    "#b3b3b3"   // Dark grey
+];
+            const color = d3.scaleOrdinal(darkPastelColors);
+            const legend = d3.select("#legend").selectAll(".legend-item")
+                .data(continents)
+                .enter()
+                .append("div")
+                .attr("class", "legend-item")
+                .style("display", "flex")
+                .style("align-items", "center")
+                .style("margin-right", "15px")
+                .style("cursor", "pointer")
+            legend.on("click", (event, d) => {
+                const continentData = hierarchy.children.find(c => c.name === d);
+
+                // Create a new hierarchy object for the selected continent
+                const continentHierarchy = {
+                    name: d,
+                    children: continentData.children
+                };
+
+                // Use the parent color for the gradient
+                const parentColor = color(d);
+
+                // Draw the treemap for the continent with a gradient matching the parent color
+                drawTreemap(continentHierarchy, "World > " + d, parentColor);
+                updateBreadcrumb(["World", d]);
+            });
+
+
+
+
+            legend.append("div")
+                .style("width", "20px")
+                .style("height", "20px")
+                .style("margin-right", "5px")
+                .style("background-color", d => color(d));
+
+            legend.append("span")
+                .text(d => d)
+                .style("font-size", "14px");
+        }
+
+        // Update Breadcrumb
+        function updateBreadcrumb(levels) {
+            const breadcrumb = d3.select("#breadcrumb").selectAll("span")
+                .data(levels);
+
+            breadcrumb.enter()
+                .append("span")
+                .attr("class", "breadcrumb-item")
+                .merge(breadcrumb)
+                .text((d, i) => d)
+                .on("click", (event, d) => {
+                    const levelIndex = levels.indexOf(d);
+                    const hierarchyLevel = levels.slice(0, levelIndex + 1);
+
+                    // Reconstruct the correct hierarchy level
+                    let targetLevel;
+                    if (levelIndex === 0) {
+                        // If clicking on "World", reset to original hierarchy
+                        targetLevel = hierarchy;
+                    } else {
+                        targetLevel = navigateToHierarchy(hierarchyLevel, hierarchy);
+                    }
+
+                    // Determine the correct level for drawing treemap
+                    const treemapLevel = levelIndex === 0 ? "World" : hierarchyLevel.join(" > ");
+
+                    drawTreemap(targetLevel, treemapLevel);
+                    updateBreadcrumb(hierarchyLevel);
+                });
+
+            breadcrumb.exit().remove();
+        }
+
+    </script>
+</body>

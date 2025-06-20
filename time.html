@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TB Cases Timeline</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f4f4f4;
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        #sidebar {
+            width: 180px;
+            background-color: #2c3e50;
+            color: #ecf0f1;
+            padding: 15px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        #sidebar h2 {
+            margin: 0;
+            color: white;
+            text-align: center;
+            font-size: 16px;
+        }
+
+        select, button {
+            background-color: #34495e;
+            border: none;
+            color: #ecf0f1;
+            padding: 8px;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 0.3s ease;
+        }
+
+        select:hover, button:hover {
+            background-color: #45627d;
+        }
+
+        button:disabled {
+            background-color: #7f8c8d;
+            cursor: not-allowed;
+        }
+
+        #chart-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background: #fff;
+            padding: 10px;
+        }
+
+        #current-year {
+            color: #ecf0f1;
+            text-align: center;
+            background-color: #34495e;
+            padding: 5px;
+            border-radius: 4px;
+        }
+
+        .tooltip {
+            position: absolute;
+            background: rgba(0, 0, 0, 0.8);
+            color: #fff;
+            padding: 5px 10px;
+            border-radius: 5px;
+            font-size: 12px;
+            pointer-events: none;
+            visibility: hidden;
+        }
+    </style>
+</head>
+<body>
+    <div id="sidebar">
+        <h2>TB Cases Visualization</h2>
+        <select id="grouping">
+            <option value="countries" selected>Countries</option>
+            <option value="continents">Continents</option>
+        </select>
+        <div style="display: flex; gap: 5px;">
+            <button id="prev" style="flex: 1;">◀</button>
+            <button id="play" style="flex: 1;">▶</button>
+            <button id="pause" style="flex: 1;" disabled>❚❚</button>
+        </div>
+        <p id="current-year">2000</p>
+        <button id="go-back" style="display: none;">↩ Back</button>
+    </div>
+
+    <div id="chart-container">
+        <div id="chart"></div>
+        <div id="tooltip" class="tooltip"></div>
+    </div>
+
+    <script>
+        const margin = { top: 20, right: 20, bottom: 30, left: 200 };
+        const width = window.innerWidth - 250 - margin.left - margin.right;
+        const height = window.innerHeight - margin.top - margin.bottom;
+    
+        const svg = d3.select("#chart")
+            .append("svg")
+            .attr("width", width + margin.left + margin.right)
+            .attr("height", height + margin.top + margin.bottom)
+            .append("g")
+            .attr("transform", `translate(${margin.left},${margin.top})`);
+    
+        const tooltip = d3.select("#tooltip");
+    
+        let yearIndex = 0;
+        let interval = null;
+        let isPlaying = false;
+        let currentGrouping = "countries";
+        let isDrilledDown = false;
+        let drilledContinent = null;
+    
+        const knownContinents = ["Africa", "Asia", "Europe", "North America", "Oceania", "South America"];
+
+        const countryToContinentMap = {
+            "AFG": "Asia", "USA": "North America", "IND": "Asia", "CHN": "Asia", "RUS": "Europe", 
+            "BRA": "South America", "MEX": "North America", "PAK": "Asia", "NGA": "Africa", "BGD": "Asia"
+        }; 
+    
+        d3.csv('data.csv').then(data => {
+            data.forEach(d => {
+                d.Year = +d.Year;
+                d["Estimated number of new cases of all forms of tuberculosis"] = +d["Estimated number of new cases of all forms of tuberculosis"];
+            });
+    
+            const filteredData = data.filter(d => d.Entity !== "World");
+            const years = Array.from(new Set(filteredData.map(d => d.Year))).sort((a, b) => a - b);
+    
+            const x = d3.scaleLinear().range([0, width]);
+            const y = d3.scaleBand().range([0, height]).padding(0.1);
+            const color = d3.scaleSequential(d3.interpolateReds);
+    
+            const xAxis = d3.axisBottom(x)
+                .ticks(10)
+                .tickFormat(d3.format(".2s"))
+                .tickSizeInner(-height)
+                .tickSizeOuter(0)
+                .tickPadding(10);
+    
+            const yAxis = d3.axisLeft(y);
+    
+            svg.append("g").attr("class", "x-axis grid").attr("transform", `translate(0,${height})`);
+            svg.append("g").attr("class", "y-axis");
+            svg.append("g").attr("class", "bar-lines");
+    
+            function getDataForYear(year) {
+                if (isDrilledDown && drilledContinent) {
+                    const countriesInContinent = Object.keys(countryToContinentMap)
+                        .filter(code => countryToContinentMap[code] === drilledContinent);
+    
+                    return filteredData
+                        .filter(d => d.Year === year && countriesInContinent.includes(d.Code))
+                        .sort((a, b) => b["Estimated number of new cases of all forms of tuberculosis"] - a["Estimated number of new cases of all forms of tuberculosis"])
+                        .slice(0, 10);
+                } else if (currentGrouping === "countries") {
+                    return filteredData
+                        .filter(d => d.Year === year && d.Code)
+                        .sort((a, b) => b["Estimated number of new cases of all forms of tuberculosis"] - a["Estimated number of new cases of all forms of tuberculosis"])
+                        .slice(0, 10);
+                } else {
+                    return filteredData
+                        .filter(d => d.Year === year && knownContinents.includes(d.Entity))
+                        .sort((a, b) => b["Estimated number of new cases of all forms of tuberculosis"] - a["Estimated number of new cases of all forms of tuberculosis"]);
+                }
+            }
+    
+            function updateChart(year) {
+                const dataForYear = getDataForYear(year);
+    
+                d3.select("#current-year").text(year);
+                d3.select("#go-back").style("display", isDrilledDown ? "block" : "none");
+    
+                x.domain([0, d3.max(dataForYear, d => d["Estimated number of new cases of all forms of tuberculosis"])]);
+                y.domain(dataForYear.map(d => d.Entity));
+                color.domain([0, d3.max(dataForYear, d => d["Estimated number of new cases of all forms of tuberculosis"])]);
+    
+                const bars = svg.selectAll(".bar").data(dataForYear, d => d.Entity);
+                const barLines = svg.select(".bar-lines").selectAll(".bar-line").data(dataForYear, d => d.Entity);
+    
+                // Bars
+                bars.enter()
+                    .append("rect")
+                    .attr("class", "bar")
+                    .attr("x", 0)
+                    .attr("y", d => y(d.Entity))
+                    .attr("height", y.bandwidth())
+                    .attr("width", 0)
+                    .attr("fill", d => color(d["Estimated number of new cases of all forms of tuberculosis"]))
+                    .on("mouseover", (event, d) => {
+                        tooltip.style("visibility", "visible")
+                            .html(`<strong>${d.Entity}:</strong> ${d3.format(",")(d["Estimated number of new cases of all forms of tuberculosis"])} cases`)
+                            .style("top", `${event.pageY - 20}px`)
+                            .style("left", `${event.pageX + 10}px`);
+                    })
+                    .on("mousemove", event => {
+                        tooltip.style("top", `${event.pageY - 20}px`)
+                            .style("left", `${event.pageX + 10}px`);
+                    })
+                    .on("mouseout", () => {
+                        tooltip.style("visibility", "hidden");
+                    })
+                    .on("click", (event, d) => {
+                        if (knownContinents.includes(d.Entity)) {
+                            isDrilledDown = true;
+                            drilledContinent = d.Entity;
+                            updateChart(year);
+                        }
+                    })
+                    .merge(bars)
+                    .transition()
+                    .duration(500)
+                    .attr("y", d => y(d.Entity))
+                    .attr("height", y.bandwidth())
+                    .attr("width", d => x(d["Estimated number of new cases of all forms of tuberculosis"]));
+    
+                // Bar Lines
+                barLines.enter()
+                    .append("line")
+                    .attr("class", "bar-line")
+                    .attr("x1", 0)
+                    .attr("x2", 0)
+                    .attr("y1", d => y(d.Entity))
+                    .attr("y2", d => y(d.Entity) + y.bandwidth())
+                    .attr("stroke", "white")
+                    .attr("stroke-width", 1)
+                    .merge(barLines)
+                    .transition()
+                    .duration(500)
+                    .attr("x1", d => x(d["Estimated number of new cases of all forms of tuberculosis"]))
+                    .attr("x2", d => x(d["Estimated number of new cases of all forms of tuberculosis"]))
+                    .attr("y1", d => y(d.Entity))
+                    .attr("y2", d => y(d.Entity) + y.bandwidth());
+    
+                bars.exit().remove();
+                barLines.exit().remove();
+    
+                svg.select(".x-axis")
+                    .transition()
+                    .duration(500)
+                    .call(xAxis)
+                    .selectAll(".tick line")
+                    .attr("stroke", "#e0e0e0")
+                    .attr("stroke-dasharray", "2,2");
+    
+                svg.select(".y-axis").transition().duration(500).call(yAxis);
+            }
+    
+            function playAnimation() {
+                if (isPlaying) return;
+    
+                isPlaying = true;
+                d3.select("#play").attr("disabled", true);
+                d3.select("#pause").attr("disabled", null);
+    
+                interval = setInterval(() => {
+                    updateChart(years[yearIndex]);
+                    yearIndex = (yearIndex + 1) % years.length;
+                }, 1000);
+            }
+    
+            function pauseAnimation() {
+                isPlaying = false;
+                d3.select("#play").attr("disabled", null);
+                d3.select("#pause").attr("disabled", true);
+    
+                clearInterval(interval);
+            }
+    
+            function navigateYear(direction) {
+                pauseAnimation();
+                yearIndex = (yearIndex + direction + years.length) % years.length;
+                updateChart(years[yearIndex]);
+            }
+    
+            function goBack() {
+                isDrilledDown = false;
+                drilledContinent = null;
+                updateChart(years[yearIndex]);
+            }
+    
+            updateChart(years[yearIndex]);
+    
+            d3.select("#play").on("click", playAnimation);
+            d3.select("#pause").on("click", pauseAnimation);
+            d3.select("#prev").on("click", () => navigateYear(-1));
+            d3.select("#next").on("click", () => navigateYear(1));
+            d3.select("#go-back").on("click", goBack);
+    
+            d3.select("#grouping").on("change", function () {
+                currentGrouping = this.value;
+                isDrilledDown = false;
+                drilledContinent = null;
+                updateChart(years[yearIndex]);
+            });
+        });
+    </script>
+</body>
+</html>

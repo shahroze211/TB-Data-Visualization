@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>World Map of TB Cases</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        #map {
+            width: 100%;
+            height: 80vh;
+            cursor: move;
+        }
+
+        #tooltip {
+            position: absolute;
+            padding: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            border-radius: 5px;
+            pointer-events: none;
+            display: none;
+            font-size: 14px;
+            z-index: 100;
+        }
+
+        #controls {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            z-index: 100;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .zoom-button {
+            background-color: white;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            padding: 5px 10px;
+            cursor: pointer;
+            font-size: 16px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        
+
+        .zoom-button:hover {
+            background-color: #f0f0f0;
+        }
+
+        #continent-dropdown,
+        #country-dropdown {
+            position: absolute;
+            top: 10px;
+            z-index: 10;
+            margin: 10px;
+            padding: 5px;
+            background: white;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-size: 14px;
+            max-width: 300px;
+        }
+
+        #country-dropdown {
+            top: 50px;
+            width: 200px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        #slider {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 80%;
+        }
+
+        #slider-label {
+            position: absolute;
+            bottom: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            color: #333;
+            font-size: 16px;
+            font-weight: 600;
+            margin-top: 10px;
+        }
+                /* New styles for critical case pins */
+        .critical-pin {
+            fill: red;
+            stroke: white;
+            stroke-width: 2;
+        }
+
+        .critical-pin-text {
+            font-size: 6px;
+            fill: white;
+            font-weight: bold;
+            text-anchor: middle;
+        }
+        #color-legend {
+            position: absolute;
+            bottom: 50px;
+            left: 20px;
+            background: rgba(255, 255, 255, 0.8);
+            border-radius: 5px;
+            padding: 10px;
+            z-index: 100;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        }
+
+        .legend-color-box {
+            width: 20px;
+            height: 20px;
+            display: inline-block;
+            margin-right: 10px;
+            vertical-align: middle;
+        }
+
+        .legend-label {
+            font-size: 12px;
+            vertical-align: middle;
+        }
+    </style>
+</head>
+
+<body>
+    <select id="continent-dropdown">
+        <option value="">Select Continent</option>
+        <option value="Africa">Africa</option>
+        <option value="Asia">Asia</option>
+        <option value="Europe">Europe</option>
+        <option value="North America">North America</option>
+        <option value="South America">South America</option>
+        <option value="Oceania">Oceania</option>
+    </select>
+
+    <select id="country-dropdown">
+        <option value="">Select Country</option>
+    </select>
+
+    <div id="controls">
+        <button id="zoom-in" class="zoom-button">+</button>
+        <button id="zoom-out" class="zoom-button">-</button>
+        <button id="reset-zoom" class="zoom-button">⟲</button>
+    </div>
+
+    <div id="map"></div>
+    <div id="tooltip"></div>
+    <div id="color-legend"></div>
+    <input type="range" id="slider" min="2000" max="2022" value="2022" step="1">
+    <label for="slider" id="slider-label">Year: 2022</label>
+
+    <script>
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+        const CRITICAL_CASE_THRESHOLD = 500000; // Threshold for critical cases
+
+        // Create SVG for the map
+        const svg = d3.select("#map")
+            .append("svg")
+            .attr("width", width)
+            .attr("height", height);
+
+        // Add a light blue background for the ocean
+        svg.append("rect")
+            .attr("width", width)
+            .attr("height", height)
+            .attr("fill", "#357abd")
+            .attr("opacity", 0.7);
+
+        // Define the projection
+        const projection = d3.geoMercator()
+            .scale(150)
+            .translate([width / 2, height / 2]);
+
+        const path = d3.geoPath().projection(projection);
+
+        // Soft red palette for TB analysis
+        const colorScale = d3.scaleThreshold()
+            .domain([1000, 10000, 50000, 100000, 500000, 1000000])
+            .range(['#fde2e1', '#f9bfb9', '#f79796', '#f26c6c', '#d84949', '#b02f2f', '#801f1f']);
+
+            function createInteractiveColorLegend() {
+    // Remove existing legend
+    d3.select("#color-legend").html("");
+
+    const compactColors = [
+        { color: '#fde2e1', threshold: 1000 },
+        { color: '#f9bfb9', threshold: 10000 },
+        { color: '#f79796', threshold: 50000 },
+        { color: '#f26c6c', threshold: 100000 },
+        { color: '#d84949', threshold: 500000 },
+        { color: '#b02f2f', threshold: 1000000 },
+        { color: '#801f1f', threshold: Infinity }
+    ];
+
+    const legend = d3.select("#color-legend")
+        .style("width", "150px")
+        .style("background", "rgba(255,255,255,0.9)")
+        .style("border-radius", "4px")
+        .style("padding", "5px")
+        .style("box-shadow", "0 2px 4px rgba(0,0,0,0.1)")
+        .style("display", "flex")
+        .style("flex-direction", "column")
+        .style("align-items", "center");
+
+    const svg = legend.append("svg")
+        .attr("width", 140)
+        .attr("height", 20);
+
+    // Create gradient
+    const gradient = svg.append("defs")
+        .append("linearGradient")
+        .attr("id", "tb-compact-gradient")
+        .attr("x1", "0%")
+        .attr("y1", "0%")
+        .attr("x2", "100%")
+        .attr("y2", "0%");
+
+    compactColors.forEach((stop, index) => {
+        gradient.append("stop")
+            .attr("offset", `${(index / (compactColors.length - 1)) * 100}%`)
+            .attr("stop-color", stop.color);
+    });
+
+    // Gradient rectangle
+    svg.append("rect")
+        .attr("width", 140)
+        .attr("height", 10)
+        .attr("rx", 3)
+        .attr("ry", 50)
+        .style("fill", "url(#tb-compact-gradient)")
+        .style("stroke", "#ccc")
+        .style("stroke-width", "0.5px");
+
+    // Labels
+    const labelContainer = legend.append("div")
+        .style("display", "flex")
+        .style("width", "100%")
+        .style("justify-content", "space-between")
+        .style("font-size", "10px")
+        .style("color", "#666")
+        .style("margin-top", "3px");
+
+    labelContainer.append("span").text("0");
+    labelContainer.append("span").text("1M+");
+
+    // Optional hover interaction
+    svg.append("rect")
+        .attr("width", 140)
+        .attr("height", 10)
+        .attr("fill", "transparent")
+        .on("mouseover", function(event) {
+            d3.select("#tooltip")
+                .style("display", "block")
+                .style("left", (event.pageX + 10) + "px")
+                .style("top", (event.pageY - 10) + "px")
+                .html("TB Cases Intensity Gradient<br>From 0 to 1M+ cases");
+        })
+        .on("mouseout", function() {
+            d3.select("#tooltip").style("display", "none");
+        });
+}
+        let geojsonData, csvData;
+        let tbData = {};
+        let countriesGroup, criticalPinsGroup, currentYear;
+
+        // Enhanced zoom functionality
+        const zoom = d3.zoom()
+            .scaleExtent([1, 8])
+            .on("zoom", function (event) {
+                // Transform both countries and map
+                const transform = event.transform;
+                countriesGroup.attr("transform", transform);
+                
+                // Update pin positions but keep their size constant
+                criticalPinsGroup.selectAll(".critical-pin-group")
+                    .attr("transform", d => {
+                        const [x, y] = projection(d3.geoCentroid(d));
+                        return `translate(${transform.applyX(x)},${transform.applyY(y)})`;
+                    });
+            });
+
+        Promise.all([
+            d3.json('https://raw.githubusercontent.com/holtzy/D3-graph-gallery/master/DATA/world.geojson'),
+            d3.csv('data.csv')
+        ]).then(([geojsonDataLoaded, csvDataLoaded]) => {
+            createInteractiveColorLegend();
+            geojsonData = geojsonDataLoaded;
+            csvData = csvDataLoaded;
+
+            // Create data mapping
+            csvData.forEach(row => {
+                const countryCode = row.Code || row.Entity;
+                if (!tbData[countryCode]) {
+                    tbData[countryCode] = {};
+                }
+                tbData[countryCode][row.Year] = +row['Estimated number of new cases of all forms of tuberculosis'] || 0;
+            });
+
+            // Match GeoJSON country IDs with CSV data
+            geojsonData.features.forEach(feature => {
+                const countryCode = feature.id;
+                feature.properties.cases = tbData[countryCode] || {};
+                feature.properties.continent = feature.properties.continent || 'Unknown';
+            });
+
+            // Create countries group
+            countriesGroup = svg.append("g");
+            
+            // Create critical pins group
+            criticalPinsGroup = svg.append("g");
+
+            // Function to update map based on selected year
+            function updateMap(year) {
+                currentYear = year;
+                
+                // Update countries
+                countriesGroup
+                    .selectAll("path")
+                    .data(geojsonData.features)
+                    .join("path")
+                    .attr("d", path)
+                    .attr("fill", d => {
+                        const countryData = d.properties.cases;
+                        return countryData[year] ? colorScale(countryData[year]) : "#cfefff";
+                    })
+                    .attr("stroke", "#bcbcbc")
+                    .attr("stroke-width", 0.5)
+                    .attr("opacity", 1);
+
+                // Add critical case pins
+                const criticalCountries = geojsonData.features.filter(d => {
+                    const countryData = d.properties.cases;
+                    return countryData[year] >= CRITICAL_CASE_THRESHOLD;
+                });
+
+                // Clear previous pins
+                criticalPinsGroup.selectAll("*").remove();
+
+                // Add new critical case pins
+                const criticalPins = criticalPinsGroup
+                    .selectAll(".critical-pin")
+                    .data(criticalCountries)
+                    .enter()
+                    .append("g")
+                    .attr("class", "critical-pin-group")
+                    .attr("transform", d => {
+                        const [x, y] = projection(d3.geoCentroid(d));
+                        return `translate(${x},${y})`;
+                    });
+
+                // Add pin circles
+                criticalPins.append("circle")
+                    .attr("cx", 0)
+                    .attr("cy", 0)
+                    .attr("r", 10)
+                    .attr("class", "critical-pin");
+
+                // Add pin text
+                criticalPins.append("text")
+                    .attr("x", 0)
+                    .attr("y", 4)
+                    .text(d => {
+                        const cases = d.properties.cases[year];
+                        return cases >= 1000000 ? "1M+" : Math.round(cases / 1000) + "K";
+                    })
+                    .attr("class", "critical-pin-text");
+
+                // Mouseover and click events
+                countriesGroup.selectAll("path")
+                    .on("mouseover", function (event, d) {
+                        const countryData = d.properties.cases;
+                        const cases = countryData[year] || 0;
+                        const countryName = d.properties.name || 'Unknown';
+                        d3.select("#tooltip")
+                            .style("left", event.pageX + "px")
+                            .style("top", event.pageY + "px")
+                            .style("display", "block")
+                            .html(`
+                                <b>Country:</b> ${countryName}<br>
+                                <b>Year:</b> ${year}<br>
+                                <b>TB Cases:</b> ${cases.toLocaleString()}<br>
+                                ${cases >= CRITICAL_CASE_THRESHOLD ? '<b>Status:</b> Critical' : ''}
+                            `);
+
+                        // Highlight the hovered country
+                        d3.select(this).attr("stroke", "#000").attr("stroke-width", 1.5);
+                    })
+                    .on("mouseout", function () {
+                        d3.select("#tooltip").style("display", "none");
+                        d3.select(this).attr("stroke", "#bcbcbc").attr("stroke-width", 0.5);
+                    })
+                    .on("click", function (event, d) {
+                        // Highlight clicked country and dim others
+                        countriesGroup.selectAll("path")
+                            .attr("opacity", 0.3);
+                        d3.select(this)
+                            .attr("opacity", 1)
+                            .attr("stroke", "#000")
+                            .attr("stroke-width", 2);
+
+                        // Update country dropdown
+                        d3.select("#country-dropdown")
+                            .property("value", d.properties.name);
+                    });
+            }
+
+            // Initialize map with the most recent year
+            const defaultYear = 2022;
+            updateMap(defaultYear);
+
+            // Apply zoom to the SVG
+            svg.call(zoom);
+
+
+            // Zoom buttons functionality
+            d3.select("#zoom-in").on("click", () => {
+                svg.transition().call(zoom.scaleBy, 1.5);
+            });
+
+            d3.select("#zoom-out").on("click", () => {
+                svg.transition().call(zoom.scaleBy, 0.667);
+            });
+
+            d3.select("#reset-zoom").on("click", () => {
+                svg.transition().call(zoom.transform, d3.zoomIdentity);
+                // Reset map highlighting
+                countriesGroup.selectAll("path")
+                    .attr("opacity", 1)
+                    .attr("stroke", "#bcbcbc")
+                    .attr("stroke-width", 0.5);
+
+                // Reset dropdowns
+                d3.select("#continent-dropdown").property("value", "");
+                d3.select("#country-dropdown").property("value", "");
+            });
+
+            // Slider to change the year
+            d3.select("#slider").on("input", function () {
+                const selectedYear = this.value;
+                d3.select("#slider-label").text(`Year: ${selectedYear}`);
+                updateMap(selectedYear);
+            });
+            d3.select("#continent-dropdown").on("change", function () {
+                const selectedContinent = this.value;
+
+                // Reset previous selections
+                countriesGroup.selectAll("path")
+                    .attr("opacity", 1)
+                    .attr("stroke", "#bcbcbc")
+                    .attr("stroke-width", 0.5);
+
+                if (selectedContinent) {
+                    // Fetch countries for the selected continent
+                    fetch(`https://restcountries.com/v3.1/region/${selectedContinent.toLowerCase()}`)
+                        .then(response => response.json())
+                        .then(countries => {
+                            // Create a set of country names for faster lookup
+                            const continentCountries = new Set(
+                                countries.map(country => country.name.common)
+                            );
+
+                            // Populate country dropdown
+                            const countryDropdown = d3.select("#country-dropdown");
+                            countryDropdown.selectAll("option").remove();
+                            countryDropdown.append("option").attr("value", "").text("Select Country");
+
+                            countries.forEach(country => {
+                                countryDropdown.append("option")
+                                    .attr("value", country.name.common)
+                                    .text(country.name.common);
+                            });
+
+                            // Highlight countries on the map
+                            countriesGroup.selectAll("path")
+                                .attr("opacity", d => {
+                                    return continentCountries.has(d.properties.name) ? 1 : 0.3;
+                                })
+                                .attr("stroke", d => {
+                                    return continentCountries.has(d.properties.name) ? "#000" : "#bcbcbc";
+                                })
+                                .attr("stroke-width", d => {
+                                    return continentCountries.has(d.properties.name) ? 1.5 : 0.5;
+                                });
+                        })
+                        .catch(error => {
+                            console.error("Error fetching countries:", error);
+                        });
+                }
+            });
+
+            // Country dropdown functionality
+            d3.select("#country-dropdown").on("change", function () {
+                const selectedCountry = this.value;
+
+                // Reset previous selections
+                countriesGroup.selectAll("path")
+                    .attr("opacity", 1)
+                    .attr("stroke", "#bcbcbc")
+                    .attr("stroke-width", 0.5);
+
+                if (selectedCountry) {
+                    // Dim all countries except the selected one
+                    countriesGroup.selectAll("path")
+                        .attr("opacity", d =>
+                            d.properties.name === selectedCountry ? 1 : 0.3
+                        );
+
+                    // Find the selected country in the GeoJSON data
+                    const selectedCountryFeature = geojsonData.features.find(f => f.properties.name === selectedCountry);
+
+                    if (selectedCountryFeature) {
+                        // Highlight the selected country
+                        countriesGroup.selectAll("path")
+                            .filter(d => d.properties.name === selectedCountry)
+                            .attr("opacity", 1)
+                            .attr("stroke", "#000")
+                            .attr("stroke-width", 2);
+
+                        // Calculate the bounding box of the country
+                        const bounds = path.bounds(selectedCountryFeature);
+                        const dx = bounds[1][0] - bounds[0][0];
+                        const dy = bounds[1][1] - bounds[0][1];
+                        const x = (bounds[0][0] + bounds[1][0]) / 2;
+                        const y = (bounds[0][1] + bounds[1][1]) / 2;
+                        const scale = Math.max(1, Math.min(8, 0.9 / Math.max(dx / width, dy / height)));
+
+                        // Animate zoom to the selected country
+                        svg.transition()
+                            .duration(750)
+                            .call(zoom.transform, d3.zoomIdentity
+                                .translate(width / 2, height / 2)
+                                .scale(scale)
+                                .translate(-x, -y)
+                            );
+                    }
+                }
+            });
+        });
+    </script>
+</body>
+
+</html>

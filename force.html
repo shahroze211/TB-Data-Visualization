@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Force-Directed Graph with Zoom & Animation</title>
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" rel="stylesheet">
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      overflow: hidden;
+    }
+    .tooltip {
+      position: absolute;
+      background-color: rgba(255, 255, 255, 0.9);
+      border: 1px solid #ccc;
+      padding: 8px;
+      border-radius: 5px;
+      pointer-events: none;
+      font-size: 14px;
+      box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+    }
+    .icon-button {
+      position: absolute;
+      top: 10px;
+      width: 30px;
+      height: 30px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 50%;
+      background-color: #007bff;
+      color: white;
+      cursor: pointer;
+      transition: background-color 0.3s;
+      margin: 5px;
+      box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+    }
+
+    .icon-button:hover {
+      background-color: #0056b3;
+    }
+
+    .icon-button i {
+      font-size: 16px;
+    }
+
+    #zoom-in { left: 10px; }
+    #zoom-out { left: 60px; }
+    #reset { left: 110px; }
+    #start { left: 160px; }
+    #pause { left: 210px; }
+
+    #year-display {
+      position: absolute;
+      bottom: 20px;
+      right: 20px;
+      font-size: 24px;
+      font-weight: bold;
+      color: #333;
+      z-index: 10;
+    }
+  </style>
+</head>
+<body>
+  <div id="zoom-in" class="icon-button" title="Zoom In">
+    <i class="fas fa-search-plus"></i>
+  </div>
+  <div id="zoom-out" class="icon-button" title="Zoom Out">
+    <i class="fas fa-search-minus"></i>
+  </div>
+  <div id="reset" class="icon-button" title="Reset">
+    <i class="fas fa-sync"></i>
+  </div>
+  <div id="start" class="icon-button" title="Start Animation">
+    <i class="fas fa-play"></i>
+  </div>
+  <div id="pause" class="icon-button" title="Pause Animation">
+    <i class="fas fa-pause"></i>
+  </div>
+  <svg id="graph"></svg>
+  <div class="tooltip" style="display: none;"></div>
+  <div class="year-display" id="year-display">Year: 2000</div>
+
+  <script>
+    d3.csv("data.csv").then(data => {
+      const countryToContinentMap = {
+        "AFG": "Asia", "ALB": "Europe", "DZA": "Africa", "AND": "Europe", "AGO": "Africa",
+            "ATG": "North America", "ARG": "South America", "ARM": "Asia", "AUS": "Oceania", "AUT": "Europe",
+            "AZE": "Asia", "BHS": "North America", "BHR": "Asia", "BGD": "Asia", "BRB": "North America",
+            "BLR": "Europe", "BEL": "Europe", "BLZ": "North America", "BEN": "Africa", "BTN": "Asia",
+            "BOL": "South America", "BIH": "Europe", "BWA": "Africa", "BRA": "South America", "BRN": "Asia",
+            "BGR": "Europe", "BFA": "Africa", "BDI": "Africa", "CPV": "Africa", "KHM": "Asia",
+            "CMR": "Africa", "CAN": "North America", "CAF": "Africa", "TCD": "Africa", "CHL": "South America",
+            "CHN": "Asia", "COL": "South America", "COM": "Africa", "COG": "Africa", "CRI": "North America",
+            "HRV": "Europe", "CUB": "North America", "CYP": "Asia", "CZE": "Europe", "DNK": "Europe",
+            "DJI": "Africa", "DMA": "North America", "DOM": "North America", "ECU": "South America", "EGY": "Africa",
+            "SLV": "North America", "GNQ": "Africa", "ERI": "Africa", "EST": "Europe", "SWZ": "Africa",
+            "ETH": "Africa", "FJI": "Oceania", "FIN": "Europe", "FRA": "Europe", "GAB": "Africa",
+            "GMB": "Africa", "GEO": "Asia", "DEU": "Europe", "GHA": "Africa", "GRC": "Europe",
+            "GRD": "North America", "GTM": "North America", "GIN": "Africa", "GNB": "Africa", "GUY": "South America",
+            "HTI": "North America", "HND": "North America", "HUN": "Europe", "ISL": "Europe", "IND": "Asia",
+            "IDN": "Asia", "IRN": "Asia", "IRQ": "Asia", "IRL": "Europe", "ISR": "Asia",
+            "ITA": "Europe", "JAM": "North America", "JPN": "Asia", "JOR": "Asia", "KAZ": "Asia",
+            "KEN": "Africa", "KIR": "Oceania", "KOR": "Asia", "KWT": "Asia", "KGZ": "Asia",
+            "LAO": "Asia", "LVA": "Europe", "LBN": "Asia", "LSO": "Africa", "LBR": "Africa",
+            "LBY": "Africa", "LIE": "Europe", "LTU": "Europe", "LUX": "Europe", "MDG": "Africa",
+            "MWI": "Africa", "MYS": "Asia", "MDV": "Asia", "MLI": "Africa", "MLT": "Europe",
+            "MHL": "Oceania", "MRT": "Africa", "MUS": "Africa", "MEX": "North America", "FSM": "Oceania",
+            "MDA": "Europe", "MCO": "Europe", "MNG": "Asia", "MNE": "Europe", "MAR": "Africa",
+            "MOZ": "Africa", "MMR": "Asia", "NAM": "Africa", "NRU": "Oceania", "NPL": "Asia",
+            "NLD": "Europe", "NZL": "Oceania", "NIC": "North America", "NER": "Africa", "NGA": "Africa",
+            "MKD": "Europe", "NOR": "Europe", "OMN": "Asia", "PAK": "Asia", "PLW": "Oceania",
+            "PAN": "North America", "PNG": "Oceania", "PRY": "South America", "PER": "South America", "PHL": "Asia",
+            "POL": "Europe", "PRT": "Europe", "QAT": "Asia", "ROU": "Europe", "RUS": "Europe",
+            "RWA": "Africa", "KNA": "North America", "LCA": "North America", "VCT": "North America", "WSM": "Oceania",
+            "SMR": "Europe", "STP": "Africa", "SAU": "Asia", "SEN": "Africa", "SRB": "Europe",
+            "SYC": "Africa", "SLE": "Africa", "SGP": "Asia", "SVK": "Europe", "SVN": "Europe",
+            "SLB": "Oceania", "SOM": "Africa", "ZAF": "Africa", "SSD": "Africa", "ESP": "Europe",
+            "LKA": "Asia", "SDN": "Africa", "SUR": "South America", "SWE": "Europe", "CHE": "Europe",
+            "SYR": "Asia", "TWN": "Asia", "TJK": "Asia", "TZA": "Africa", "THA": "Asia",
+            "TLS": "Asia", "TGO": "Africa", "TON": "Oceania", "TTO": "North America", "TUN": "Africa",
+            "TUR": "Asia", "TKM": "Asia", "UGA": "Africa", "UKR": "Europe", "ARE": "Asia",
+            "GBR": "Europe", "USA": "North America", "URY": "South America", "UZB": "Asia", "VUT": "Oceania",
+            "VEN": "South America", "VNM": "Asia", "YEM": "Asia", "ZMB": "Africa", "ZWE": "Africa"
+      };
+      const continentColors = {
+        "Asia": "#FF6F61",
+        "Europe": "#6B5B95",
+        "Africa": "#88B04B",
+        "North America": "#FFBB28",
+        "South America": "#D65076",
+        "Oceania": "#92A8D1",
+        "Unknown": "#999999"
+      };
+
+      const tooltip = d3.select(".tooltip");
+      const svg = d3.select("#graph");
+      const width = window.innerWidth;
+      const height = window.innerHeight;
+      svg.attr("width", width).attr("height", height);
+
+      const zoom = d3.zoom()
+      .scaleExtent([0.1, 10])
+      .on("zoom", (event) => {
+        container.attr("transform", event.transform);
+        adjustTooltipSize(event.transform.k);
+      });
+      svg.call(zoom);
+
+      const container = svg.append("g");
+
+      const simulation = d3.forceSimulation()
+        .force("link", d3.forceLink().id(d => d.id).distance(150))
+        .force("charge", d3.forceManyBody().strength(-300))
+        .force("center", d3.forceCenter(width / 2, height / 2));
+
+      let animationInterval = null;
+      let currentYear = 2000;
+      const startYear = 2000;
+      const endYear = 2020;
+      const delay = 2000;
+
+      const yearDisplay = document.getElementById("year-display");
+
+      function adjustTooltipSize(scale) {
+        tooltip.style("font-size", `${14 * scale}px`)
+               .style("padding", `${8 * scale}px`);
+      }
+
+      function calculateGrowthRate(entity, year, data) {
+        const previousYearData = data.find(d => d.Entity === entity && +d.Year === year - 1);
+        const currentYearData = data.find(d => d.Entity === entity && +d.Year === year);
+
+        if (previousYearData && currentYearData) {
+          const prevCases = +previousYearData["Estimated number of new cases of all forms of tuberculosis"] || 0;
+          const currCases = +currentYearData["Estimated number of new cases of all forms of tuberculosis"] || 0;
+
+          return prevCases === 0 ? "N/A" : (((currCases - prevCases) / prevCases) * 100).toFixed(2) + "%";
+        }
+        return "N/A";
+      }
+
+      function updateGraph(year) {
+        yearDisplay.textContent = `Year: ${year}`;
+        const filteredData = data
+          .filter(d => +d.Year === year && countryToContinentMap[d.Code])
+          .map(d => ({
+            id: d.Entity,
+            continent: countryToContinentMap[d.Code],
+            value: +d["Estimated number of new cases of all forms of tuberculosis"],
+            growthRate: calculateGrowthRate(d.Entity, year, data)
+          }));
+
+        const continents = [...new Set(filteredData.map(d => d.continent))].map(c => ({
+          id: c,
+          isContinent: true,
+          totalCases: filteredData
+            .filter(d => d.continent === c)
+            .reduce((sum, d) => sum + d.value, 0),
+          growthRate: calculateGrowthRate(c, year, data)
+        }));
+
+        const world = {
+          id: "World",
+          isWorld: true,
+          totalCases: filteredData.reduce((sum, d) => sum + d.value, 0),
+          growthRate: calculateGrowthRate("World", year, data)
+        };
+
+        const allNodes = [...filteredData, ...continents, world];
+        const links = [
+          ...filteredData.map(d => ({ source: d.continent, target: d.id, value: d.value })),
+          ...continents.map(c => ({ source: "World", target: c.id, value: c.totalCases }))
+        ];
+
+        container.selectAll("*").remove();
+
+        const link = container.append("g")
+          .attr("class", "links")
+          .selectAll("line")
+          .data(links)
+          .join("line")
+          .attr("stroke", "#999")
+          .attr("stroke-opacity", 0.6)
+          .attr("stroke-width", d => Math.sqrt(d.value) / 150);
+
+        const node = container.append("g")
+          .attr("class", "nodes")
+          .selectAll("circle")
+          .data(allNodes)
+          .join("circle")
+          .attr("r", d => d.value ? Math.sqrt(d.value) / 50 : 15)
+          .attr("fill", d => d.isWorld ? "#000" : (continentColors[d.continent] || continentColors["Unknown"]))
+          .call(d3.drag()
+            .on("start", dragstarted)
+            .on("drag", dragged)
+            .on("end", dragended))
+          .on("mouseover", (event, d) => {
+            tooltip.style("display", "block")
+              .style("left", `${event.pageX + 10}px`)
+              .style("top", `${event.pageY + 10}px`)
+              .html(`<strong>${d.isWorld ? "World" : d.isContinent ? "Continent" : "Country"}:</strong> ${d.id}<br>
+                     ${d.isWorld || d.isContinent ? `<strong>Total Cases:</strong> ${d.totalCases}` : `<strong>TB Cases:</strong> ${d.value}`}<br>
+                     <strong>Growth Rate:</strong> ${d.growthRate}`);
+          })
+          .on("mouseout", () => {
+            tooltip.style("display", "none");
+          })
+          .on("click", (event, d) => {
+            if (d.isWorld || d.isContinent) {
+              alert(`${d.id}: Total Cases: ${d.totalCases}`);
+            }
+          });
+
+        node.append("title").text(d => `${d.id}: ${d.value || d.totalCases}`);
+
+        simulation.nodes(allNodes).on("tick", () => {
+          link
+            .attr("x1", d => d.source.x)
+            .attr("y1", d => d.source.y)
+            .attr("x2", d => d.target.x)
+            .attr("y2", d => d.target.y);
+
+          node
+            .attr("cx", d => d.x)
+            .attr("cy", d => d.y);
+        });
+
+        simulation.force("link").links(links);
+        simulation.alpha(1).restart();
+      }
+
+      function dragstarted(event) {
+        if (!event.active) simulation.alphaTarget(0.3).restart();
+        event.subject.fx = event.subject.x;
+        event.subject.fy = event.subject.y;
+      }
+
+      function dragged(event) {
+        event.subject.fx = event.x;
+        event.subject.fy = event.y;
+      }
+
+      function dragended(event) {
+        if (!event.active) simulation.alphaTarget(0);
+        event.subject.fx = null;
+        event.subject.fy = null;
+      }
+
+      function startAnimation() {
+        if (animationInterval) return; // Prevent multiple intervals
+
+        animationInterval = setInterval(() => {
+          currentYear++;
+          if (currentYear > endYear) {
+            currentYear = startYear; // Loop back to the start year
+          }
+          updateGraph(currentYear);
+        }, delay);
+      }
+
+      function pauseAnimation() {
+        if (animationInterval) {
+          clearInterval(animationInterval);
+          animationInterval = null;
+        }
+      }
+
+      d3.select("#start").on("click", startAnimation);
+      d3.select("#pause").on("click", pauseAnimation);
+      d3.select("#zoom-in").on("click", () => svg.transition().duration(750).call(zoom.scaleBy, 1.5));
+      d3.select("#zoom-out").on("click", () => svg.transition().duration(750).call(zoom.scaleBy, 0.75));
+      d3.select("#reset").on("click", () => svg.transition().duration(750).call(zoom.transform, d3.zoomIdentity));
+
+      updateGraph(currentYear); // Initial graph load
+    });
+  </script>
+</body>
+
+</html>

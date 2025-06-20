@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Global TB Treatment Visualization</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f4f4f8;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+        }
+
+        .visualization-container {
+            background-color: white;
+            border-radius: 12px;
+            box-shadow: 0 6px 12px rgba(0, 0, 0, 0.1);
+            padding: 20px;
+            width: 900px;
+            position: relative;
+        }
+
+        .container {
+            display: flex;
+            gap: 20px;
+            position: relative;
+        }
+
+        .legend {
+            width: 100px;
+            padding: 5px;
+            background-color: #f9f9f9;
+            border-radius: 8px;
+            font-size: 8px;
+            /* Reduced from 10px */
+            height: 100px;
+        }
+
+        .legend-title {
+            font-size: 9px;
+            /* Reduced from 11px */
+            margin-bottom: 3px;
+            /* Tighter spacing */
+            font-weight: bold;
+        }
+
+        .legend-item:hover {
+            background-color: #f0f0f0;
+        }
+
+        .legend-item.inactive {
+            opacity: 0.3;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin-bottom: 2px;
+            /* Significantly reduced spacing */
+            padding: 1px;
+            /* Tighter padding */
+            line-height: 1.2;
+            /* Compact line height */
+        }
+
+        .legend-color {
+            width: 8px;
+            /* Slightly smaller */
+            height: 8px;
+            /* Slightly smaller */
+            margin-right: 4px;
+            /* Reduced margin */
+            border-radius: 2px;
+        }
+
+        #chart {
+            flex-grow: 1;
+            position: relative;
+        }
+
+        .controls {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 15px;
+            justify-content: center;
+        }
+
+        .tooltip {
+            position: absolute;
+            background: white;
+            border-radius: 8px;
+            /* Smaller border radius */
+            border: 2px solid #4a90e2;
+            padding: 8px;
+            /* Reduced padding */
+            pointer-events: none;
+            opacity: 0;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+            /* Reduced shadow size */
+            font-size: 8px;
+            /* Smaller font size */
+            max-width: 200px;
+            /* Smaller maximum width */
+            transition: all 0.3s ease;
+            transform: scale(0.5);
+            /* Further reduce size */
+        }
+
+        .tooltip.show {
+            opacity: 1;
+            transform: scale(1);
+        }
+
+        .tooltip-title {
+            font-weight: bold;
+            font-size: 16px;
+            color: #4a90e2;
+            margin-bottom: 10px;
+        }
+
+        .tooltip-detail {
+            margin-bottom: 5px;
+        }
+
+        #play-pause {
+            background-color: #4a90e2;
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+
+        #play-pause:hover {
+            background-color: #357abd;
+        }
+
+        .axis path,
+        .axis line {
+            fill: none;
+            stroke: #d3d3d3;
+            shape-rendering: crispEdges;
+        }
+
+        .axis text {
+            font-size: 12px;
+            fill: #666;
+        }
+
+        .data-point {
+            transition: all 0.3s ease;
+        }
+
+        .data-point.selected {
+            stroke: black;
+            stroke-width: 3px;
+        }
+
+        .expand-icon {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            cursor: pointer;
+            color: #4a90e2;
+            transition: color 0.3s ease;
+            z-index: 10;
+        }
+
+        .expand-icon:hover {
+            color: #357abd;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="visualization-container">
+        <a href="series_main.html" class="expand-icon">
+            <i class="fas fa-expand"></i>
+        </a>
+        <div class="controls">
+            <div>
+                <span>Year: </span>
+                <span id="current-year">2018</span>
+                <input type="range" id="year-slider" min="2018" max="2022" value="2018" step="1">
+            </div>
+            <div>
+                <button id="play-pause">Play</button>
+            </div>
+        </div>
+        <div class="container">
+            <div id="legend" class="legend">
+                <div class="legend-title">Continents</div>
+            </div>
+            <div id="chart"></div>
+        </div>
+        <div class="tooltip" id="tooltip"></div>
+    </div>
+
+    <script>
+        d3.csv("tb_data.csv").then(function (data) {
+            // Convert numeric columns
+            data.forEach(d => {
+                d.Year = +d.Year;
+                d.Total_Funding = +d.Total_Funding || 0;
+                d.Total_Treated = +d.Total_Treated || 0;
+                d.Estimated_New_Cases = +d.Estimated_New_Cases || 0;
+            });
+
+            // Filter out countries with 0 funding or 0 treated patients
+            data = data.filter(d => d.Total_Funding > 0 && d.Total_Treated > 0);
+
+            createVisualization(data);
+        }).catch(function (error) {
+            console.error("Error loading the CSV file:", error);
+        });
+
+        function createVisualization(data) {
+            // Set up chart dimensions (reduced size)
+            const margin = { top: 30, right: 30, bottom: 50, left: 80 };
+            const width = 700 - margin.left - margin.right;
+            const height = 400 - margin.top - margin.bottom;
+
+            // Prepare data
+            const continents = [...new Set(data.map(d => d.Continent))];
+            const continentColors = d3.scaleOrdinal()
+                .domain(continents)
+                .range(d3.schemeCategory10);
+
+            // Create SVG
+            d3.select("#chart svg").remove();
+            const svg = d3.select("#chart")
+                .append("svg")
+                .attr("width", width + margin.left + margin.right)
+                .attr("height", height + margin.top + margin.bottom)
+                .append("g")
+                .attr("transform", `translate(${margin.left},${margin.top})`);
+
+            // Tooltip
+            const tooltip = d3.select("#tooltip");
+
+            // Logarithmic scales to handle wide ranges and prevent overlapping
+            const xScale = d3.scaleLog()
+                .domain([
+                    Math.max(1, d3.min(data, d => d.Total_Funding)),  // Ensure minimum of 1 for log scale
+                    d3.max(data, d => d.Total_Funding)
+                ])
+                .range([0, width])
+                .nice();
+
+            const yScale = d3.scaleLog()
+                .domain([
+                    Math.max(1, d3.min(data, d => d.Total_Treated)),  // Ensure minimum of 1 for log scale
+                    d3.max(data, d => d.Total_Treated)
+                ])
+                .range([height, 0])
+                .nice();
+
+            const sizeScale = d3.scaleSqrt()
+                .domain([0, d3.max(data, d => d.Estimated_New_Cases)])
+                .range([2, 15]); // Reduced max bubble size
+
+            // Create the legend inside the page
+            const legend = d3.select("#legend");
+            legend.selectAll(".legend-item").remove();
+
+            const legendItems = legend.selectAll(".legend-item")
+                .data(continents)
+                .enter()
+                .append("div")
+                .attr("class", "legend-item");
+
+            legendItems.append("div")
+                .attr("class", "legend-color")
+                .style("background-color", d => continentColors(d));
+
+            legendItems.append("span")
+                .text(d => d);
+
+            legendItems.on("click", function (event, continent) {
+                const selectedYear = d3.select("#year-slider").property("value");
+                const filteredData = data
+                    .filter(d => d.Year == selectedYear)
+                    .filter(d => d.Continent === continent);
+
+                renderChart(filteredData);
+
+                // Highlight selected legend item
+                legend.selectAll(".legend-item")
+                    .classed("inactive", d => d !== continent);
+            });
+
+            // Render function (rest of the code remains the same as in the original script)
+            function renderChart(yearData) {
+                // Filter out zero-funding or zero-treated data points for the specific year
+                yearData = yearData.filter(d => d.Total_Funding > 0 && d.Total_Treated > 0);
+
+                // Clear existing points
+                svg.selectAll(".data-point").remove();
+
+                // Create points
+                const points = svg.selectAll(".data-point")
+                    .data(yearData)
+                    .enter()
+                    .append("circle")
+                    .attr("class", "data-point")
+                    .attr("cx", d => xScale(Math.max(1, d.Total_Funding)))  // Ensure minimum of 1
+                    .attr("cy", d => yScale(Math.max(1, d.Total_Treated)))  // Ensure minimum of 1
+                    .attr("r", d => sizeScale(d.Estimated_New_Cases))
+                    .attr("fill", d => continentColors(d.Continent))
+                    .attr("opacity", 0.7)
+                    .on("mouseover", function (event, d) {
+                        // Highlight point
+                        d3.select(this)
+                            .transition()
+                            .duration(200)
+                            .attr("opacity", 1)
+                            .attr("r", d => sizeScale(d.Estimated_New_Cases) * 1.5);
+
+                        // Show detailed tooltip
+                        tooltip.html(`
+                            <div class="tooltip-title">${d.Country}</div>
+                            <div class="tooltip-detail"><strong>Continent:</strong> ${d.Continent}</div>
+                            <div class="tooltip-detail"><strong>Year:</strong> ${d.Year}</div>
+                            <div class="tooltip-detail"><strong>Total Funding:</strong> $${d.Total_Funding.toLocaleString()}</div>
+                            <div class="tooltip-detail"><strong>Total Treated:</strong> ${d.Total_Treated.toLocaleString()}</div>
+                            <div class="tooltip-detail"><strong>Estimated New Cases:</strong> ${d.Estimated_New_Cases.toLocaleString()}</div>
+                        `)
+                            .style("left", (event.pageX + 10) + "px")
+                            .style("top", (event.pageY - 28) + "px")
+                            .classed("show", true);
+                    })
+                    .on("mouseout", function () {
+                        // Restore point
+                        d3.select(this)
+                            .transition()
+                            .duration(200)
+                            .attr("opacity", 0.7)
+                            .attr("r", d => sizeScale(d.Estimated_New_Cases));
+
+                        // Hide tooltip
+                        tooltip.classed("show", false);
+                    })
+                    .on("click", function (event, d) {
+                        // Deselect all points first
+                        svg.selectAll(".data-point")
+                            .classed("selected", false)
+                            .transition()
+                            .duration(300)
+                            .attr("r", d => sizeScale(d.Estimated_New_Cases));
+
+                        // Select and highlight clicked point
+                        d3.select(this)
+                            .classed("selected", true)
+                            .transition()
+                            .duration(300)
+                            .attr("r", d => sizeScale(d.Estimated_New_Cases) * 2);
+                    });
+
+                // Axes
+                svg.selectAll(".x-axis").remove();
+                svg.selectAll(".y-axis").remove();
+
+                svg.append("g")
+                    .attr("class", "x-axis axis")
+                    .attr("transform", `translate(0,${height})`)
+                    .call(d3.axisBottom(xScale)
+                        .tickFormat(d => {
+                            if (d >= 1e9) { // If the value is a billion or more
+                                return `$${d3.format(".1s")(d / 1e9)}B`; // Format as billion
+                            } else if (d >= 1e6) { // If the value is a million or more
+                                return `$${d3.format(".1s")(d / 1e6)}M`; // Format as million
+                            } else {
+                                return `$${d3.format(".1s")(d)}`; // Otherwise, use the default format
+                            }
+                        })
+                        .ticks(5)) // Reduced number of ticks
+                    .append("text")
+                    .attr("x", width / 2)
+                    .attr("y", 30)
+                    .attr("fill", "black")
+                    .style("text-anchor", "middle")
+                    .text("Total Funding ($)");
+
+                svg.append("g")
+                    .attr("class", "y-axis axis")
+                    .call(d3.axisLeft(yScale)
+                        .tickFormat(d3.format(".1s"))
+                        .ticks(4)) // Reduced number of ticks
+                    .append("text")
+                    .attr("transform", "rotate(-90)")
+                    .attr("x", -height / 2)
+                    .attr("y", -40)
+                    .attr("fill", "black")
+                    .style("text-anchor", "middle")
+                    .text("Total Treated");
+            }
+
+            // Year slider and play/pause functionality (remains the same)
+            const yearSlider = d3.select("#year-slider");
+            const currentYearDisplay = d3.select("#current-year");
+            const playPauseButton = d3.select("#play-pause");
+            let isPlaying = false;
+            let intervalId;
+
+            yearSlider.on("input", function () {
+                const selectedYear = this.value;
+                currentYearDisplay.text(selectedYear);
+
+                // Reset legend
+                legend.selectAll(".legend-item")
+                    .classed("inactive", false);
+
+                // Filter data for the selected year
+                const filteredData = data.filter(d => d.Year == selectedYear);
+
+                renderChart(filteredData);
+            });
+
+            playPauseButton.on("click", function () {
+                if (isPlaying) {
+                    clearInterval(intervalId);
+                    playPauseButton.text("Play");
+                } else {
+                    intervalId = setInterval(() => {
+                        let currentYear = +yearSlider.property("value");
+                        currentYear = currentYear < 2022 ? currentYear + 1 : 2018;
+                        yearSlider.property("value", currentYear);
+                        yearSlider.dispatch("input");
+                    }, 1000);
+                    playPauseButton.text("Pause");
+                }
+                isPlaying = !isPlaying;
+            });
+
+            // Initial render with 2018 data
+            renderChart(data.filter(d => d.Year === 2018));
+        }
+    </script>
+</body>
+
+</html>

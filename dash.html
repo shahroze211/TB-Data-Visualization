@@ -1,0 +1,980 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Global Tuberculosis Analysis</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" rel="stylesheet">
+    <link rel="stylesheet" type="text/css" href="css/style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f4f4f8;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+        }
+
+        .dashboard {
+            width: 100%;
+            max-width: 1400px;
+            min-height: 200vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .visualizations {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            grid-template-areas: 
+                "timeseries worldmap"
+                "sunburst force"
+                "treemap treemap"
+                "barchart barchart";  /* This line allows treemap to span full width */
+            gap: 20px;
+            flex-grow: 1;
+        }
+        .bar-chart-viz {
+            grid-area: barchart;
+            width: 97%;  /* Ensure full width */
+            margin-left: auto;
+            margin-right: auto;
+            font-family: Arial, sans-serif;
+        }
+
+        .dashboard-header {
+            background-color: #4a90e2;
+            color: white;
+            text-align: center;
+            padding: 20px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+            box-shadow: 0 6px 12px rgba(0, 0, 0, 0.1);
+        }
+
+        .visualization-container {
+            background-color: white;
+            border-radius: 12px;
+            box-shadow: 0 6px 12px rgba(0, 0, 0, 0.1);
+            padding: 20px;
+            position: relative;
+        }
+
+
+        /* Grid Area Placements */
+        .time-series-viz { grid-area: timeseries; }
+        .world-map-viz { grid-area: worldmap; }
+        .sunburst-viz { grid-area: sunburst; }
+        .force-graph-viz { grid-area: force; }
+        .tree-map-viz { 
+            grid-area: treemap; 
+            width: 97%;  /* Ensure full width */
+        }
+
+        .tree-map-viz {
+    font-family: Arial, sans-serif;
+    margin: 10px;
+    max-width: 1400px;
+    margin-left: auto;
+    margin-right: auto;
+}
+.filter-wrapper {
+    display: flex;
+    flex-direction: column; /* Stack label and dropdown */
+    gap: 4px; /* Space between label and dropdown */
+    width: 100%; /* Full width for responsiveness */
+    max-width: 300px; /* Optional: Set a maximum width */
+    margin-bottom: 20px; /* Space below the filter */
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; /* Match page font */
+}
+
+.filter-label {
+    font-size: 14px;
+    font-weight: bold;
+    color: #4a4a4a;
+}
+
+.filter-dropdown {
+    padding: 10px 12px;
+    font-size: 16px;
+    color: #4a4a4a;
+    background-color: #ffffff;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+
+.tree-map-viz #tooltip {
+    position: absolute;
+    background: #fff;
+    border: 1px solid #ccc;
+    padding: 8px;
+    border-radius: 4px;
+    display: none;
+    pointer-events: none;
+    font-size: 11px;
+}
+
+.tree-map-viz #legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 8px 0;
+}
+
+.tree-map-viz .legend-item {
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    font-size: 12px;
+}
+
+.tree-map-viz .legend-item div {
+    width: 15px;
+    height: 15px;
+    margin-right: 4px;
+}
+
+.tree-map-viz svg {
+    width: 100%;
+    height: 400px;
+}
+
+.tree-map-viz #breadcrumb {
+    margin: 10px 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+}
+.bar-chart-viz iframe {
+            width: 100%;
+            height: 400px;
+            border: none;
+        }
+.tree-map-viz #breadcrumb span {
+    padding: 6px 10px;
+    background: #f5f5f5;
+    border-radius: 15px;
+    color: #007BFF;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.3s ease, color 0.3s ease;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.tree-map-viz #breadcrumb span:hover {
+    background: #007BFF;
+    color: white;
+}
+
+.tree-map-viz #breadcrumb span.active {
+    background: #007BFF;
+    color: white;
+    cursor: default;
+    box-shadow: none;
+}
+
+.tree-map-viz #breadcrumb span:not(:last-child)::after {
+    content: ">";
+    margin-left: 8px;
+    color: #888;
+    font-weight: normal;
+}
+
+.tree-map-viz #yearly-legend {
+    margin: 10px 0;
+    font-size: 12px;
+}
+    </style>
+</head>
+<body>
+    <div class="dashboard">
+        <div class="dashboard-header">
+            <h1>Global Tuberculosis Analysis</h1>
+        </div>
+            <!-- Continent Filter Dropdown -->
+            <div class="filter-wrapper">
+                <label for="continentFilter" class="filter-label">Select Continent:</label>
+                <select id="continentFilter" class="filter-dropdown">
+                    <option value="All">All</option>
+                    <!-- Continent options will be dynamically populated -->
+                </select>
+            </div>
+            
+        <div class="visualizations">
+            <!-- First Visualization: Time Series Scatter Plot -->
+            <div class="visualization-container time-series-viz">
+                <div class="visualization-header">
+                    Time Series Scatter Plot
+                </div>
+                <a href="series_main.html" class="expand-icon">
+                    <i class="fas fa-expand"></i>
+                </a>
+                <div class="controls">
+                    <div>
+                        <span>Year: </span>
+                        <span id="current-year">2018</span>
+                        <input type="range" id="year-slider" min="2018" max="2022" value="2018" step="1">
+                    </div>
+                    <div>
+                        <button id="play-pause">Play</button>
+                    </div>
+                </div>
+                <div class="container">
+                    <div id="legend" class="legend">
+                        <div class="legend-title">Continents</div>
+                    </div>
+                    <div id="chart"></div>
+                </div>
+                <div class="tooltip" id="tooltip"></div>
+            </div>
+
+            <!-- Second Visualization: World Map -->
+            <div class="visualization-container world-map-viz">
+                <div class="visualization-header">
+                    World Map
+                </div>
+                <a href="map.html" class="expand-icon">
+                    <i class="fas fa-expand"></i>
+                </a>
+                <iframe src="map.html" class="map-frame" title="World Map Visualization"></iframe>
+            </div>
+
+            <!-- Third Visualization: Sun Burst -->
+            <div class="visualization-container sunburst-viz">
+                <div class="visualization-header">
+                    Sun Burst
+                </div>
+                <a href="sunburst.html" class="expand-icon">
+                    <i class="fas fa-expand"></i>
+                </a>
+                <iframe src="sunburst.html" class="chart-frame" title="Sun Burst Visualization"></iframe>
+            </div>
+
+            <!-- Fourth Visualization: Force Directed Graph -->
+            <div class="visualization-container force-graph-viz">
+                <div class="visualization-header">
+                    Force Directed Graph
+                </div>
+                <a href="force.html" class="expand-icon">
+                    <i class="fas fa-expand"></i>
+                </a>
+                <iframe src="force.html" class="force-frame" title="Force Directed Graph Visualization"></iframe>
+            </div>
+
+            <!-- Fifth Visualization: Tree Map (Now Full Width) -->
+            <!-- <div class="visualization-container tree-map-viz">
+                <div class="visualization-header">
+                    Tree Map
+                </div>
+                <a href="treemap.html" class="expand-icon">
+                    <i class="fas fa-expand"></i>
+                </a>
+                <iframe src="treemap.html" class="treemap-frame" title="Tree Map Visualization"></iframe>
+            </div> -->
+            <!-- Fifth Visualization: Tree Map (Now Full Width) -->
+            <div class="visualization-container tree-map-viz">
+                <div class="visualization-header">
+                    Tree Map
+                </div>
+                <a href="treemap.html" class="expand-icon">
+                    <i class="fas fa-expand"></i>
+                </a>
+                <div id="breadcrumb"></div>
+                <div id="legend"></div>
+                <svg></svg>
+                <div id="tooltip"></div>
+                <div id="yearly-legend" style="margin: 10px 0;"></div>
+            </div>
+            <div class="visualization-container bar-chart-viz">
+                <div class="visualization-header">
+                    Bar Chart
+                </div>
+                <a href="time.html" class="expand-icon">
+                    <i class="fas fa-expand"></i>
+                </a>
+                <iframe src="time.html" class="bar-chart-frame" title="Bar Chart Visualization"></iframe>
+            </div>
+            
+        </div>
+    </div>
+
+    <script>
+        d3.csv("tb_data.csv").then(function (data) {
+            // Convert numeric columns
+            data.forEach(d => {
+                d.Year = +d.Year;
+                d.Total_Funding = +d.Total_Funding || 0;
+                d.Total_Treated = +d.Total_Treated || 0;
+                d.Estimated_New_Cases = +d.Estimated_New_Cases || 0;
+            });
+
+            // Filter out countries with 0 funding or 0 treated patients
+            data = data.filter(d => d.Total_Funding > 0 && d.Total_Treated > 0);
+
+            const continents = [...new Set(data.map(d => d.Continent))];
+            const continentFilter = d3.select("#continentFilter");
+            continentFilter.selectAll("option")
+                .data(["All", ...continents])
+                .enter()
+                .append("option")
+                .attr("value", d => d)
+                .text(d => d);
+
+            createVisualization(data);
+        }).catch(function (error) {
+            console.error("Error loading the CSV file:", error);
+        });
+
+        function createVisualization(data) {
+            // Set up chart dimensions (reduced size)
+            const margin = { top: 30, right: 30, bottom: 50, left: 80 };
+            const width = 700 - margin.left - margin.right;
+            const height = 400 - margin.top - margin.bottom;
+
+            // Prepare data
+            const continents = [...new Set(data.map(d => d.Continent))];
+            const continentColors = d3.scaleOrdinal()
+                .domain(continents)
+                .range(d3.schemeCategory10);
+
+            // Create SVG
+            d3.select("#chart svg").remove();
+            const svg = d3.select("#chart")
+                .append("svg")
+                .attr("width", width + margin.left + margin.right)
+                .attr("height", height + margin.top + margin.bottom)
+                .append("g")
+                .attr("transform", `translate(${margin.left},${margin.top})`);
+
+            // Tooltip
+            const tooltip = d3.select("#tooltip");
+
+            // Logarithmic scales to handle wide ranges and prevent overlapping
+            const xScale = d3.scaleLog()
+                .domain([
+                    Math.max(1, d3.min(data, d => d.Total_Funding)),  // Ensure minimum of 1 for log scale
+                    d3.max(data, d => d.Total_Funding)
+                ])
+                .range([0, width])
+                .nice();
+
+            const yScale = d3.scaleLog()
+                .domain([
+                    Math.max(1, d3.min(data, d => d.Total_Treated)),  // Ensure minimum of 1 for log scale
+                    d3.max(data, d => d.Total_Treated)
+                ])
+                .range([height, 0])
+                .nice();
+
+            const sizeScale = d3.scaleSqrt()
+                .domain([0, d3.max(data, d => d.Estimated_New_Cases)])
+                .range([2, 15]); // Reduced max bubble size
+
+            // Create the legend inside the page
+            const legend = d3.select("#legend");
+            legend.selectAll(".legend-item").remove();
+
+            const legendItems = legend.selectAll(".legend-item")
+                .data(continents)
+                .enter()
+                .append("div")
+                .attr("class", "legend-item");
+
+            legendItems.append("div")
+                .attr("class", "legend-color")
+                .style("background-color", d => continentColors(d));
+
+            legendItems.append("span")
+                .text(d => d);
+
+            legendItems.on("click", function (event, continent) {
+                const selectedYear = d3.select("#year-slider").property("value");
+                const filteredData = data
+                    .filter(d => d.Year == selectedYear)
+                    .filter(d => d.Continent === continent);
+
+            
+
+                renderChart(filteredData);
+
+                // Highlight selected legend item
+                legend.selectAll(".legend-item")
+                    .classed("inactive", d => d !== continent);
+            });
+
+            // Render function (rest of the code remains the same as in the original script)
+            function renderChart(yearData) {
+                const selectedContinent = d3.select("#continentFilter").property("value");
+
+// Filter data by selected continent
+yearData = yearData.filter(d => selectedContinent === "All" || d.Continent === selectedContinent);
+
+                // Clear existing points
+                svg.selectAll(".data-point").remove();
+
+                // Create points
+                const points = svg.selectAll(".data-point")
+                    .data(yearData)
+                    .enter()
+                    .append("circle")
+                    .attr("class", "data-point")
+                    .attr("cx", d => xScale(Math.max(1, d.Total_Funding)))  // Ensure minimum of 1
+                    .attr("cy", d => yScale(Math.max(1, d.Total_Treated)))  // Ensure minimum of 1
+                    .attr("r", d => sizeScale(d.Estimated_New_Cases))
+                    .attr("fill", d => continentColors(d.Continent))
+                    .attr("opacity", 0.7)
+                    .on("mouseover", function (event, d) {
+                        // Highlight point
+                        d3.select(this)
+                            .transition()
+                            .duration(200)
+                            .attr("opacity", 1)
+                            .attr("r", d => sizeScale(d.Estimated_New_Cases) * 1.5);
+
+                        // Show detailed tooltip
+                        tooltip.html(`
+                            <div class="tooltip-title">${d.Country}</div>
+                            <div class="tooltip-detail"><strong>Continent:</strong> ${d.Continent}</div>
+                            <div class="tooltip-detail"><strong>Year:</strong> ${d.Year}</div>
+                            <div class="tooltip-detail"><strong>Total Funding:</strong> $${d.Total_Funding.toLocaleString()}</div>
+                            <div class="tooltip-detail"><strong>Total Treated:</strong> ${d.Total_Treated.toLocaleString()}</div>
+                            <div class="tooltip-detail"><strong>Estimated New Cases:</strong> ${d.Estimated_New_Cases.toLocaleString()}</div>
+                        `)
+                            .style("left", (event.pageX + 10) + "px")
+                            .style("top", (event.pageY - 28) + "px")
+                            .classed("show", true);
+                    })
+                    .on("mouseout", function () {
+                        // Restore point
+                        d3.select(this)
+                            .transition()
+                            .duration(200)
+                            .attr("opacity", 0.7)
+                            .attr("r", d => sizeScale(d.Estimated_New_Cases));
+
+                        // Hide tooltip
+                        tooltip.classed("show", false);
+                    })
+                    .on("click", function (event, d) {
+                        // Deselect all points first
+                        svg.selectAll(".data-point")
+                            .classed("selected", false)
+                            .transition()
+                            .duration(300)
+                            .attr("r", d => sizeScale(d.Estimated_New_Cases));
+
+                        // Select and highlight clicked point
+                        d3.select(this)
+                            .classed("selected", true)
+                            .transition()
+                            .duration(300)
+                            .attr("r", d => sizeScale(d.Estimated_New_Cases) * 2);
+                    });
+
+                // Axes
+                svg.selectAll(".x-axis").remove();
+                svg.selectAll(".y-axis").remove();
+
+                svg.append("g")
+                    .attr("class", "x-axis axis")
+                    .attr("transform", `translate(0,${height})`)
+                    .call(d3.axisBottom(xScale)
+                        .tickFormat(d => {
+                            if (d >= 1e9) { // If the value is a billion or more
+                                return `$${d3.format(".1s")(d / 1e9)}B`; // Format as billion
+                            } else if (d >= 1e6) { // If the value is a million or more
+                                return `$${d3.format(".1s")(d / 1e6)}M`; // Format as million
+                            } else {
+                                return `$${d3.format(".1s")(d)}`; // Otherwise, use the default format
+                            }
+                        })
+                        .ticks(5)) // Reduced number of ticks
+                    .append("text")
+                    .attr("x", width / 2)
+                    .attr("y", 30)
+                    .attr("fill", "black")
+                    .style("text-anchor", "middle")
+                    .text("Total Funding ($)");
+
+                svg.append("g")
+                    .attr("class", "y-axis axis")
+                    .call(d3.axisLeft(yScale)
+                        .tickFormat(d3.format(".1s"))
+                        .ticks(4)) // Reduced number of ticks
+                    .append("text")
+                    .attr("transform", "rotate(-90)")
+                    .attr("x", -height / 2)
+                    .attr("y", -40)
+                    .attr("fill", "black")
+                    .style("text-anchor", "middle")
+                    .text("Total Treated");
+            }
+
+            // Year slider and play/pause functionality (remains the same)
+            const yearSlider = d3.select("#year-slider");
+            const currentYearDisplay = d3.select("#current-year");
+            const playPauseButton = d3.select("#play-pause");
+            let isPlaying = false;
+            let intervalId;
+
+            yearSlider.on("input", function () {
+    const selectedYear = this.value;
+    currentYearDisplay.text(selectedYear);
+
+    // Get selected continent
+    const selectedContinent = d3.select("#continentFilter").property("value");
+
+    // Filter data by year and continent
+    const filteredData = data.filter(d =>
+        (selectedContinent === "All" || d.Continent === selectedContinent) &&
+        d.Year == selectedYear
+    );
+
+    renderChart(filteredData);
+});
+
+
+            
+
+            playPauseButton.on("click", function () {
+                if (isPlaying) {
+                    clearInterval(intervalId);
+                    playPauseButton.text("Play");
+                } else {
+                    intervalId = setInterval(() => {
+                        let currentYear = +yearSlider.property("value");
+                        currentYear = currentYear < 2022 ? currentYear + 1 : 2018;
+                        yearSlider.property("value", currentYear);
+                        yearSlider.dispatch("input");
+                    }, 1000);
+                    playPauseButton.text("Pause");
+                }
+                isPlaying = !isPlaying;
+            });
+
+            // Initial render with 2018 data
+            renderChart(data.filter(d => d.Year === 2018));
+        }
+
+        // // Placeholder for World Map Visualization
+        // function createWorldMapVisualization() {
+        //     const mapDiv = d3.select("#map");
+        // }
+
+        // // Initialize both visualizations
+        // createWorldMapVisualization();
+    </script>
+    <script>
+// Modify the initial script to use the specific visualization container
+document.addEventListener('DOMContentLoaded', () => {
+    // Select the specific visualization container
+    const visualizationContainer = document.querySelector('.tree-map-viz');
+    const svg = visualizationContainer.querySelector('svg');
+    const legendElement = visualizationContainer.querySelector('#legend');
+    const breadcrumbElement = visualizationContainer.querySelector('#breadcrumb');
+    const tooltipElement = visualizationContainer.querySelector('#tooltip');
+    const yearlyLegendElement = visualizationContainer.querySelector('#yearly-legend');
+
+    // Load and Process Data
+    let hierarchy;
+
+    d3.csv("tb_data.csv").then(data => {
+    // Process the data and create initial treemap
+    hierarchy = processData(data);
+    drawTreemap(hierarchy);
+    drawLegend(hierarchy.children.map(d => d.name), hierarchy);
+    updateBreadcrumb(["World"]);
+
+    // Populate the dropdown
+    const continents = [...new Set(data.map(d => d.Continent))];
+    const continentFilter = d3.select("#continentFilter");
+    continentFilter.selectAll("option")
+        .data(["All", ...continents])
+        .enter()
+        .append("option")
+        .attr("value", d => d)
+        .text(d => d);
+
+    // Add event listener for continent filter
+    continentFilter.on("change", function () {
+        const updatedHierarchy = processData(data); // Reprocess data
+        drawTreemap(updatedHierarchy); // Redraw treemap
+    });
+});
+
+function processData(data) {
+    const selectedContinent = d3.select("#continentFilter").property("value");
+
+    // Filter data by selected continent
+    const filteredData = data.filter(d => selectedContinent === "All" || d.Continent === selectedContinent);
+
+    // Group the filtered data into a hierarchical structure
+    const continents = d3.group(filteredData, d => d.Continent);
+    return {
+        name: "World",
+        children: Array.from(continents, ([continent, countries]) => ({
+            name: continent,
+            children: Array.from(d3.group(countries, d => d.Country), ([country, records]) => ({
+                name: country,
+                totalFunding: d3.sum(records, d => +d.Total_Funding),
+                yearlyFunding: records.map(r => ({
+                    year: +r.Year,
+                    domesticFunding: +r.Domestic_Funding || 0,
+                    globalFundFunding: +r.GlobalFund_Funding || 0,
+                    usaidFunding: +r.USAID_Funding || 0,
+                    funding: +r.Total_Funding
+                }))
+            }))
+        }))
+    };
+}
+
+    // Updated Breadcrumb Logic
+    function navigateToHierarchy(levels, data) {
+        let currentLevel = data;
+        for (let i = 1; i < levels.length; i++) {
+            const nextLevel = currentLevel.children.find(child => child.name === levels[i]);
+            if (nextLevel) {
+                currentLevel = nextLevel;
+            }
+        }
+        return {
+            name: levels[levels.length - 1],
+            children: currentLevel.children || []
+        };
+    }
+
+// Draw Treemap
+function drawTreemap(data, level = "World", parentColor = null) {
+    const selectedContinent = d3.select("#continentFilter").property("value"); // Get selected continent
+
+    // Filter hierarchy if a specific continent is selected
+    if (selectedContinent !== "All") {
+        const continentData = data.children.find(c => c.name === selectedContinent);
+        data = continentData ? { name: selectedContinent, children: continentData.children } : { name: selectedContinent, children: [] };
+    }
+
+    // Clear previous visualization
+    d3.select(svg).selectAll("*").remove();
+    d3.select(yearlyLegendElement).html("");
+
+    const width = svg.clientWidth;
+    const height = svg.clientHeight;
+
+    const treemap = d3.treemap().size([width, height]).padding(1);
+
+    const root = d3.hierarchy(data).sum(d => d.totalFunding);
+    treemap(root);
+
+    const darkPastelColors = [
+        "#8da0cb",  // Muted blue
+        "#fc8d62",  // Soft orange
+        "#66c2a5",  // Sage green
+        "#e78ac3",  // Soft pink
+        "#a6d854",  // Light olive green
+        "#ffd92f",  // Muted yellow
+        "#e5c494",  // Soft tan
+        "#b3b3b3"   // Dark grey
+    ];
+
+    // Use either the parent color or a default ordinal color scale
+    const color = parentColor
+        ? () => parentColor
+        : d3.scaleOrdinal(darkPastelColors);
+
+    const nodes = d3.select(svg).selectAll("g")
+        .data(root.leaves())
+        .enter()
+        .append("g")
+        .attr("transform", d => `translate(${d.x0},${d.y0})`);
+
+    // Add rectangle (treemap block)
+    nodes.append("rect")
+        .attr("width", d => d.x1 - d.x0)
+        .attr("height", d => d.y1 - d.y0)
+        .attr("fill", d => color(d.parent.data.name))
+        .attr("stroke", "#2b2b2b") // Greyish-black border
+        .attr("stroke-width", 1)
+        .on("click", (event, d) => {
+            if (d.data.yearlyFunding) {
+                drawYearlyTreemap(d.data);
+                updateBreadcrumb([...level.split(" > "), d.data.name]);
+            }
+        })
+        .on("mouseover", showTooltip)
+        .on("mouseout", hideTooltip);
+
+    // Conditionally add country names based on available space
+    nodes.each(function (d) {
+        const rectWidth = d.x1 - d.x0;
+        const rectHeight = d.y1 - d.y0;
+
+        // Only add text if there is enough space
+        if (rectWidth > 30 && rectHeight > 20) { // Check if width and height are sufficient
+            d3.select(this).append("text")
+                .attr("x", 5) // Offset from left
+                .attr("y", 5) // Offset from top
+                .attr("dy", ".35em") // Vertical alignment
+                .attr("dx", ".35em") // Horizontal alignment
+                .attr("font-size", "10px")
+                .attr("fill", "black") // Changed text color to black
+                .text(d => d.data.name.length > 15 ? `${d.data.name.substring(0, 15)}...` : d.data.name); // Truncate if name is too long
+        }
+    });
+
+    nodes.append("title")
+        .text(d => `${d.data.name}: ${d3.format(",")(d.data.totalFunding)}`);
+}
+
+
+
+
+// Updated Yearly Treemap Function with Drill-Down
+function drawYearlyTreemap(countryData, currentLevel = "Yearly") {
+    d3.select(svg).selectAll("*").remove();
+    d3.select(yearlyLegendElement).html("");
+
+    const width = svg.clientWidth;
+    const height = svg.clientHeight;
+
+    const treemap = d3.treemap().size([width, height]).padding(1);
+
+    let hierarchyData;
+
+    // Different drill-down levels
+    if (currentLevel === "Yearly") {
+        // Initial view: Years
+        hierarchyData = {
+            name: "Yearly Funding",
+            children: countryData.yearlyFunding.map(yearData => ({
+                name: yearData.year.toString(),
+                totalFunding: yearData.funding,
+                year: yearData.year,
+                fullData: yearData
+            }))
+        };
+    } else if (currentLevel.startsWith("Year_")) {
+        // Drill-down view: Funding Breakdown for a specific year
+        const selectedYear = parseInt(currentLevel.split("_")[1]);
+        const yearData = countryData.yearlyFunding.find(y => y.year === selectedYear);
+
+        hierarchyData = {
+            name: `Funding Breakdown ${selectedYear}`,
+            children: [
+                { 
+                    name: "Domestic Funding", 
+                    funding: yearData.domesticFunding || 0,
+                    percentage: yearData.domesticFunding / yearData.funding * 100 || 0
+                },
+                { 
+                    name: "Global Fund Funding", 
+                    funding: yearData.globalFundFunding || 0,
+                    percentage: yearData.globalFundFunding / yearData.funding * 100 || 0
+                },
+                { 
+                    name: "USAID Funding", 
+                    funding: yearData.usaidFunding || 0,
+                    percentage: yearData.usaidFunding / yearData.funding * 100 || 0
+                }
+            ]
+        };
+    }
+
+    const root = d3.hierarchy(hierarchyData).sum(d => d.totalFunding || d.funding);
+    treemap(root);
+
+    const maxFunding = d3.max(root.leaves(), d => d.value);
+    
+    // Color schemes for different levels
+    const colorSchemes = {
+        "Yearly": d3.scaleSequential(d3.interpolateBlues).domain([0, maxFunding]),
+        "Breakdown": d3.scaleOrdinal([
+            "#8da0cb",  // Muted blue for Domestic
+            "#fc8d62",  // Soft orange for Global Fund
+            "#66c2a5"   // Sage green for USAID
+        ])
+    };
+
+    const color = currentLevel === "Yearly" 
+        ? colorSchemes.Yearly 
+        : colorSchemes.Breakdown;
+
+    const nodes = d3.select(svg).selectAll("g")
+        .data(root.leaves())
+        .enter()
+        .append("g")
+        .attr("transform", d => `translate(${d.x0},${d.y0})`);
+
+    nodes.append("rect")
+        .attr("width", d => d.x1 - d.x0)
+        .attr("height", d => d.y1 - d.y0)
+        .attr("fill", (d, i) => currentLevel === "Yearly" 
+            ? color(d.value) 
+            : color(d.data.name))
+        .attr("stroke", "#2b2b2b")
+        .attr("stroke-width", 1)
+        .on("click", (event, d) => {
+            if (currentLevel === "Yearly" && d.data.year) {
+                // Drill down to specific year's funding breakdown
+                drawYearlyTreemap(countryData, `Year_${d.data.year}`);
+                updateBreadcrumb(["World", countryData.name, `Year ${d.data.year}`]);
+            }
+        })
+        .on("mouseover", showTooltip)
+        .on("mouseout", hideTooltip);
+
+    // Add text labels
+    nodes.each(function(d) {
+        const rectWidth = d.x1 - d.x0;
+        const rectHeight = d.y1 - d.y0;
+
+        if (rectWidth > 30 && rectHeight > 20) {
+            // Add name/year text
+            d3.select(this).append("text")
+                .attr("x", 5)
+                .attr("y", 15)
+                .attr("font-size", "10px")
+                .attr("fill", "white")
+                .text(d => {
+                    if (currentLevel === "Yearly") {
+                        return d.data.name; // Year
+                    } else {
+                        // For funding breakdown, show name and percentage
+                        return `${d.data.name} (${d.data.percentage.toFixed(1)}%)`;
+                    }
+                });
+        }
+    });
+
+    nodes.append("title")
+        .text(d => {
+            if (currentLevel === "Yearly") {
+                return `Year: ${d.data.name}\nTotal Funding: ${d3.format(",")(d.value)}`;
+            } else {
+                return `${d.data.name}\nFunding: ${d3.format(",")(d.data.funding)}\nPercentage: ${d.data.percentage.toFixed(1)}%`;
+            }
+        });
+}
+
+// Modify tooltip to show more context
+function showTooltip(event, d) {
+    const tooltipContent = d3.select(tooltipElement)
+        .style("display", "block")
+        .style("left", `${event.pageX + 10}px`)
+        .style("top", `${event.pageY + 10}px`);
+
+    if (currentLevel === "Yearly") {
+        tooltipContent.html(`
+            <strong>Year: ${d.data.name}</strong><br>
+            Total Funding: ${d3.format(",")(d.value)}
+        `);
+    } else {
+        tooltipContent.html(`
+            <strong>${d.data.name}</strong><br>
+            Funding: ${d3.format(",")(d.data.funding)}<br>
+            Percentage: ${d.data.percentage.toFixed(1)}%
+        `);
+    }
+}
+
+
+
+    function hideTooltip() {
+        d3.select(tooltipElement).style("display", "none");
+    }
+
+    // Draw Legend
+    function drawLegend(continents, hierarchy) {
+        const darkPastelColors = [
+            "#8da0cb",  // Muted blue
+            "#fc8d62",  // Soft orange
+            "#66c2a5",  // Sage green
+            "#e78ac3",  // Soft pink
+            "#a6d854",  // Light olive green
+            "#ffd92f",  // Muted yellow
+            "#e5c494",  // Soft tan
+            "#b3b3b3"   // Dark grey
+        ];
+        const color = d3.scaleOrdinal(darkPastelColors);
+        const legend = d3.select(legendElement).selectAll(".legend-item")
+            .data(continents)
+            .enter()
+            .append("div")
+            .attr("class", "legend-item")
+            .style("display", "flex")
+            .style("align-items", "center")
+            .style("margin-right", "15px")
+            .style("cursor", "pointer")
+            .on("click", (event, d) => {
+                const continentData = hierarchy.children.find(c => c.name === d);
+
+                // Create a new hierarchy object for the selected continent
+                const continentHierarchy = {
+                    name: d,
+                    children: continentData.children
+                };
+
+                // Use the parent color for the gradient
+                const parentColor = color(d);
+
+                // Draw the treemap for the continent with a gradient matching the parent color
+                drawTreemap(continentHierarchy, "World > " + d, parentColor);
+                updateBreadcrumb(["World", d]);
+            });
+
+        legend.append("div")
+            .style("width", "20px")
+            .style("height", "20px")
+            .style("margin-right", "5px")
+            .style("background-color", d => color(d));
+
+        legend.append("span")
+            .text(d => d)
+            .style("font-size", "14px");
+    }
+
+    // Update Breadcrumb
+    function updateBreadcrumb(levels) {
+        const breadcrumb = d3.select(breadcrumbElement).selectAll("span")
+            .data(levels);
+
+        breadcrumb.enter()
+            .append("span")
+            .attr("class", "breadcrumb-item")
+            .merge(breadcrumb)
+            .text((d, i) => d)
+            .on("click", (event, d) => {
+                const levelIndex = levels.indexOf(d);
+                const hierarchyLevel = levels.slice(0, levelIndex + 1);
+
+                // Reconstruct the correct hierarchy level
+                let targetLevel;
+                if (levelIndex === 0) {
+                    // If clicking on "World", reset to original hierarchy
+                    targetLevel = hierarchy;
+                } else {
+                    targetLevel = navigateToHierarchy(hierarchyLevel, hierarchy);
+                }
+
+                // Determine the correct level for drawing treemap
+                const treemapLevel = levelIndex === 0 ? "World" : hierarchyLevel.join(" > ");
+
+                drawTreemap(targetLevel, treemapLevel);
+                updateBreadcrumb(hierarchyLevel);
+            });
+
+        breadcrumb.exit().remove();
+    }
+});
+
+    </script>
+
+    
+</body>
+</html>
